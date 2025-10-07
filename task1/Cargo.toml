@@ -1,0 +1,9 @@
+[package]
+name = "os-scheduler"
+version = "1.0.0"
+edition = "2021"
+description = "操作系统作业调度算法实验实现"
+authors = ["Student"]
+license = "MIT"
+
+[dependencies]
