@@ -1,0 +1,137 @@
+%!TeX program = xelatex
+\documentclass[12pt,hyperref,a4paper,UTF8]{ctexart}
+\usepackage{zjureport}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+
+% listings 配置（Rust）
+\lstdefinelanguage{Rust}{
+  morekeywords={abstract,alignof,as,become,box,break,const,continue,crate,do,dyn,
+    else,enum,extern,false,final,fn,for,if,impl,in,let,loop,macro,match,mod,move,
+    mut,offsetof,override,priv,proc,pub,pure,ref,return,Self,self,sizeof,static,
+    struct,super,true,type,typeof,unsafe,unsized,use,virtual,where,while,yield},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+}
+\lstset{
+  language=Rust,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{gray},
+  stringstyle=\color{green!40!black},
+  showstringspaces=false,
+  frame=single,
+  frameround=ffff,
+  rulecolor=\color{black!40},
+  breaklines=true,
+  columns=fullflexible,
+}
+
+% 重新定义封面标题为“第六次实验”
+{   
+    \title{ \vspace{2cm} \heiti \Huge \textbf{操作系统实验报告} \\[1em]
+    \heiti \Large \underline{第六次实验：SPOOLING 输出系统设计与实现} \\[3em] }
+    
+    \author{%% 参照样式文件的字段
+    \vspace{0.5cm}
+    \kaishu\Large 姓名\ \dlmu[9cm]{赖景康} \\[0.5em]
+    \kaishu\Large 学号\ \dlmu[9cm]{2023214564} \\[0.5em]
+    \kaishu\Large 课程\ \dlmu[9cm]{操作系统} \\[0.5em]
+    \kaishu\Large 学院\ \dlmu[9cm]{计算机学院}}
+    
+    \date{2025年12月28日}
+}
+
+\begin{document}
+
+% 封面
+\cover
+\thispagestyle{empty}
+\newpage
+
+\section{实验目的与要求}
+\begin{itemize}
+  \item 理解并掌握 SPOOLING 技术（脱机输出的假脱机机制），区分用户进程、SPOOLING 输出进程与外设驱动的职责边界。
+  \item 在并发环境下实现“多生产者→SPOOLING→设备”的安全流水线，确保批次边界正确、顺序一致且设备高效吞吐。
+  \item 以 Rust 实现线程与通道通信，验证批次输出、关机协议与资源回收的正确性。
+\end{itemize}
+
+\section{实验环境}
+\begin{itemize}
+  \item 开发工具：VS Code
+  \item 编程语言：Rust 1.70+（Edition 2021）
+  \item 项目位置：\texttt{task6/}
+\end{itemize}
+
+\section{原理与设计}
+\subsection{SPOOLING 原理}
+SPOOLING（Simultaneous Peripheral Operation On-Line）通过在内存/磁盘上设置缓冲区（“输出井”），将用户进程对慢速外设的直接访问改为对缓冲的顺序提交：
+\begin{enumerate}
+  \item \textbf{用户进程}产生输出请求，逐条写入到 SPOOLING 进程；
+  \item \textbf{SPOOLING 进程}按请求的批次边界装配为“输出块”，并顺序发送至设备；
+  \item \textbf{外设线程}（打印机/CRT）只需线性消费块，避免与用户进程直接并发争用。
+\end{enumerate}
+该模式减少上下文切换与设备访问的随机性，提高吞吐并保证批次完整性。
+
+\subsection{架构与数据流}
+本实验采用三类线程与两级通道：
+\begin{itemize}
+  \item \textbf{Producer}：多个并发用户进程，生成 \texttt{OutputRequest}（含 \texttt{pid}、\texttt{content}、\texttt{end\_batch}）。
+  \item \textbf{Spooling}：集中搬运与装配批次，遇到 \texttt{end\_batch} 即打包为 \texttt{OutputBlock} 并下发。
+  \item \textbf{Device}：顺序消费 \texttt{OutputBlock}，串行写出到外设（此处以终端打印模拟）。
+  \item 通道：\texttt{mpsc::channel<SpoolMessage>}（Producer→Spooling）、\texttt{mpsc::channel<OutputBlock>}（Spooling→Device）。
+\end{itemize}
+
+\subsection{关键协议}
+\begin{itemize}
+  \item \textbf{批次边界}：每个批次的最后一条请求设置 \texttt{end\_batch=true}，SPOOLING 形成块并发送。
+  \item \textbf{关机信号}：使用 \texttt{SpoolMessage::Shutdown} 通知 SPOOLING 完成收尾并关闭下游通道，促使设备线程优雅退出。
+  \item \textbf{容错处理}：当设备通道关闭或发送失败，SPOOLING 记录错误并停止进一步输出以避免悬挂。
+\end{itemize}
+
+\section{核心代码展示}
+为保持与代码一致性，以下直接引用项目源文件（Rust）：
+
+\noindent\textbf{文件：}\texttt{task6/src/main.rs}
+\begin{center}
+\lstinputlisting[language=Rust]{../task6/src/main.rs}
+\end{center}
+
+\section{实验步骤与运行方法}
+\subsection{构建与运行}
+在 macOS 的 \texttt{zsh} 终端执行：
+\begin{verbatim}
+cd "/Users/laijingkang/Documents/study/大三上/操作系统/OS-TASK/task6"
+cargo run
+\end{verbatim}
+
+\subsection{预期输出形态}
+程序将打印多个批次块的消费过程：
+\begin{verbatim}
+=== 输出设备：接收批次 1，条目 4 ===
+[Batch 1 / Item 1] 来自进程 1: P1-B1-...
+[Batch 1 / Item 2] 来自进程 1: P1-B1-...
+[Batch 1 / Item 3] 来自进程 1: P1-B1-...
+[Batch 1 / Item 4] 来自进程 1: P1-B1-...
+=== 批次 1 输出完成 ===
+...
+实验6 SPOOLING 模拟结束。
+\end{verbatim}
+
+\section{结果分析与讨论}
+\begin{itemize}
+  \item \textbf{顺序性保障}：设备线程只按批次顺序消费，避免在用户进程并发下出现乱序打印。
+  \item \textbf{批次完整性}：\texttt{end\_batch} 明确边界，SPOOLING 按块提交，设备层无需解析细粒度请求。
+  \item \textbf{扩展性}：可引入缓冲容量、速率限制与度量收集（队列长度、吞吐、平均等待时间），用于进一步性能评估。
+\end{itemize}
+
+\section{结论}
+本实验完成了 SPOOLING 输出系统的线程/通道实现，验证了在并发场景下以批次块驱动外设可提升吞吐且简化设备端逻辑。后续可参数化生产速率与缓冲大小，并记录度量以研究不同负载下的表现。
+
+\section{参考与仓库}
+项目仓库：\href{https://github.com/shufufufu/OS-TASK}{https://github.com/shufufufu/OS-TASK}
+
+\end{document}
